@@ -11,10 +11,75 @@
 #include <sstream>
 #include <algorithm>
 #include <conio.h>
+#include <chrono>
+#include <thread>
 
 const int KEY_UP = 72;
 const int KEY_DOWN = 80;
 const int KEY_ENTER = 13;
+
+// 타이머 관련 상수
+const int TIMER_DURATION = 30;
+const int WARNING_THRESHOLD = 10;
+
+// 난이도별 색상 정의
+enum DifficultyColor {
+    EASY_COLOR = 10,    // 초록색
+    MEDIUM_COLOR = 14,  // 노란색
+    HARD_COLOR = 12,    // 빨간색
+    EXTREME_COLOR = 13  // 보라색
+};
+
+// 한영 전환 키 정의
+#define TOGGLE_HANGUL_KEY \
+    keybd_event(VK_HANGUL, 0, 0, 0); \
+    keybd_event(VK_HANGUL, 0, KEYEVENTF_KEYUP, 0);
+
+// 한글 레이아웃 유지
+#define KEEP_HANGUL \
+    if (GetAsyncKeyState(VK_HANGUL) & 0x8000) { \
+        TOGGLE_HANGUL_KEY; \
+    }
+
+// 영어 레이아웃 유지
+#define KEEP_ENGLISH \
+    if (GetAsyncKeyState(VK_HANGUL) & 0x8000) { \
+        TOGGLE_HANGUL_KEY; \
+    }
+
+// 게임 플레이 중에 한영키가 눌렸을 때 다시 한 번 눌러서 전환을 유지
+#define HANDLE_HANGUL_KEY \
+    if (GetAsyncKeyState(VK_HANGUL) & 0x8000) { \
+        TOGGLE_HANGUL_KEY; \
+        std::cout << "\nHangul key detected. Toggling back to the previous input mode.\n"; \
+    }
+
+// 이중 버퍼링에 사용할 핸들
+HANDLE hMainConsole, hBackBuffer;
+HKL hOriginalLayout;
+
+// 백 버퍼 초기화
+void initialize_double_buffer() {
+    hMainConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    hBackBuffer = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        NULL,
+        CONSOLE_TEXTMODE_BUFFER,
+        NULL);
+}
+
+// 버퍼 교체 함수
+void swap_buffers() {
+    SetConsoleActiveScreenBuffer(hBackBuffer);
+    std::swap(hMainConsole, hBackBuffer);
+}
+
+// 백 버퍼에 출력하는 함수
+void print_to_back_buffer(int x, int y, const std::string& text) {
+    COORD coord = { (SHORT)x, (SHORT)y };
+    SetConsoleCursorPosition(hBackBuffer, coord);
+    std::cout << text;
+}
 
 std::map<std::string, std::vector<std::tuple<std::string, std::string, std::string>>> word_categories = {
     {"Animals", {
@@ -37,7 +102,7 @@ std::map<std::string, std::vector<std::tuple<std::string, std::string, std::stri
         {"sloth", "느린 움직임을 보이는 나무 위에서 사는 포유류", "hard"},
         {"cheetah", "지상에서 가장 빠른 포유류", "medium"},
         {"hippopotamus", "아프리카의 반수생 대형 초식 동물", "extreme"},
-        {"lion", "사자의 왕으로 불리는 육식성 동물", "medium"}
+        {"lion", "동물의 왕으로 불리는 육식성 동물", "medium"}
     }},
     {"Fruits", {
         {"apple", "나무에서 자라며 다양한 색을 가진 둥근 과일", "easy"},
@@ -46,9 +111,9 @@ std::map<std::string, std::vector<std::tuple<std::string, std::string, std::stri
         {"grape", "작고 둥글며 포도나무에서 자라는 과일", "easy"},
         {"mango", "달콤하고 즙이 많은 열대 과일", "medium"},
         {"peach", "털이 있는 껍질을 가진 여름철 과일", "easy"},
-        {"plum", "달콤하고 씨가 있는 둥근 과일", "medium"},
+        {"plum", "달콤하고 큰 씨가 있는 둥근 과일", "medium"},
         {"pear", "부드러운 과육을 가진 원뿔형 과일", "medium"},
-        {"kiwi", "작고 갈색 털이 있는 녹색 속의 과일", "medium"},
+        {"kiwi", "작고 갈색 털이 있는 속이 녹색인 과일", "medium"},
         {"pineapple", "가시같은 겉껍질을 가진 열대 과일", "medium"},
         {"melon", "크고 즙이 많은 과육을 가진 과일", "medium"},
         {"cherry", "작고 빨간 색의 과일", "easy"},
@@ -187,7 +252,7 @@ std::map<std::string, std::vector<std::tuple<std::string, std::string, std::stri
         {"medication", "질병을 치료하기 위한 약물", "hard"},
         {"treatment", "질병이나 부상에 대한 치료법", "hard"},
         {"clinical_trial", "새로운 치료법의 안전성과 효과를 시험하는 연구", "hard"},
-        {"anesthesia", "수술 중 고통을 줄이기 위한 방법", "exteme"},
+        {"anesthesia", "수술 중 고통을 줄이기 위한 방법", "extreme"},
         {"blood_pressure", "혈관 내 혈압을 측정하는 수치", "medium"},
         {"allergy", "면역 체계가 과민 반응을 일으키는 상태", "easy"},
         {"rehabilitation", "부상이나 질병 후 기능 회복을 위한 과정", "hard"},
@@ -239,12 +304,53 @@ std::map<std::string, std::vector<std::tuple<std::string, std::string, std::stri
     }}
 };
 
+std::string get_input_with_backspace() {
+    std::string input;
+    char ch;
 
+    while (true) {
+        ch = _getch();  // 한 글자씩 입력 받음
+        if (ch == '\r') {  // Enter 입력 시 입력 종료
+            break;
+        }
+        else if (ch == '\b') {  // 백스페이스 처리
+            if (!input.empty()) {
+                // 화면에서 마지막 글자를 지우고 커서 이동
+                std::cout << "\b \b";
+                input.pop_back();  // 입력 문자열에서도 마지막 글자 삭제
+            }
+        }
+        else {
+            input.push_back(ch);
+            std::cout << ch;  // 입력된 문자 출력
+        }
+    }
 
+    return input;
+}
+
+// 콘솔 관련 유틸리티 함수들
+// ---------------------------------
 
 // 콘솔 텍스트 색상을 설정하는 함수
 static void set_console_color(int text_color, int bg_color = 0) {
     SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), text_color + (bg_color << 4));
+}
+
+// 난이도에 따라 색상을 설정하는 함수
+void set_difficulty_color(const std::string& difficulty) {
+    if (difficulty == "easy") {
+        set_console_color(EASY_COLOR);
+    }
+    else if (difficulty == "medium") {
+        set_console_color(MEDIUM_COLOR);
+    }
+    else if (difficulty == "hard") {
+        set_console_color(HARD_COLOR);
+    }
+    else if (difficulty == "extreme") {
+        set_console_color(EXTREME_COLOR);
+    }
 }
 
 // 콘솔 화면 초기화 함수
@@ -253,30 +359,27 @@ static void clear_screen() {
 }
 
 // 콘솔 화면 크기 얻기 함수
-static COORD get_console_size() {
+COORD get_console_size() {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
-    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)) {
-        COORD console_size;
-        console_size.X = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-        console_size.Y = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-        return console_size;
+    GetConsoleScreenBufferInfo(hMainConsole, &csbi);
+    return csbi.dwSize;
+}
+
+// 최소한의 영역만 업데이트 (화면을 지우지 않음)
+void update_console(const std::vector<std::string>& content, int start_x, int start_y) {
+    for (int i = 0; i < content.size(); ++i) {
+        print_to_back_buffer(start_x, start_y + i, content[i]);
     }
-    else {
-        // 기본 값을 반환 (에러 처리)
-        COORD default_size = { 80, 25 }; // 일반적인 기본 콘솔 크기
-        return default_size;
-    }
+    swap_buffers(); // 백 버퍼와 교체
 }
 
 // 테두리를 출력하는 함수
-static void print_border(int length, char symbol = '=') {
-    // 콘솔 너비에 맞게 테두리 출력
+void print_border(int length, char symbol = '=') {
     for (int i = 0; i < length; i++) {
         std::cout << symbol;
     }
     std::cout << std::endl;
 }
-
 
 // 좌표에 텍스트 출력 함수
 static void print_at_position(int x, int y, const std::string& text) {
@@ -285,7 +388,334 @@ static void print_at_position(int x, int y, const std::string& text) {
     std::cout << text;
 }
 
-// 행맨 그림을 출력하는 함수
+// 콘솔 커서 숨기기 함수
+void hide_cursor() {
+    HANDLE consoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_CURSOR_INFO info;
+    info.dwSize = 100;
+    info.bVisible = FALSE;
+    SetConsoleCursorInfo(consoleHandle, &info);
+}
+
+// 메뉴 탐색 함수
+int navigate_menu(const std::vector<std::string>& menu_items, const std::string& title) {
+    int selected_index = 0;
+    int menu_size = menu_items.size();
+
+    while (true) {
+        // 화면을 지우고 메뉴를 다시 출력
+        system("cls");
+        set_console_color(14);
+        print_border(40);  // 상단 테두리
+        set_console_color(11);  // 파란색 텍스트
+        std::cout << "        " << title << "        " << std::endl;
+        set_console_color(14);
+        print_border(40);  // 하단 테두리
+
+        // 메뉴 항목을 출력
+        for (int i = 0; i < menu_size; ++i) {
+            if (i == selected_index) {
+                set_console_color(11);  // 선택된 항목은 파란색으로 표시
+                std::cout << ">> " << menu_items[i] << std::endl;  // 메뉴 항목 출력
+            }
+            else {
+                set_console_color(7);  // 선택되지 않은 항목은 기본 색상
+                std::cout << "   " << menu_items[i] << std::endl;  // 메뉴 항목 출력
+            }
+        }
+
+        // 키 입력을 기다림
+        int key = _getch();
+        if (key == 0 || key == 224) {  // 화살표 키 입력 시
+            key = _getch();  // 실제 화살표 키 값 가져오기
+            if (key == KEY_UP) {
+                selected_index = (selected_index - 1 + menu_size) % menu_size;  // 위쪽으로 이동
+            }
+            else if (key == KEY_DOWN) {
+                selected_index = (selected_index + 1) % menu_size;  // 아래쪽으로 이동
+            }
+        }
+        else if (key == KEY_ENTER) {
+            return selected_index;  // 엔터키를 누르면 선택된 인덱스 반환
+        }
+    }
+}
+
+
+// 타이머 UI를 출력하는 함수
+static void print_timer(int remaining_time, int hint_position_y) {
+    COORD console_size = get_console_size();
+    int timer_position_x = (console_size.X - 60) / 2;
+    int timer_position_y = hint_position_y + 2;
+
+    // 여백을 이용해 기존 내용을 덮어씀
+    print_at_position(timer_position_x, timer_position_y, "                                                   ");
+
+    if (remaining_time <= WARNING_THRESHOLD) {
+        set_console_color(12);  // 적은 시간이 남으면 빨간색
+    }
+    else {
+        set_console_color(10);  // 충분한 시간이 있으면 초록색
+    }
+
+    // 남은 시간 표시
+    print_at_position(timer_position_x, timer_position_y, "Time left: " + std::to_string(remaining_time) + "s");
+
+    // 진행 바를 출력 (덮어쓰기로 화면 깜빡임 방지)
+    std::string progress_bar = "[";
+    int total_bars = 30;
+    int filled_bars = (remaining_time * total_bars) / TIMER_DURATION;
+
+    for (int i = 0; i < filled_bars; ++i) {
+        progress_bar += "#";
+    }
+    for (int i = filled_bars; i < total_bars; ++i) {
+        progress_bar += " ";
+    }
+    progress_bar += "]";
+
+    set_console_color(11);  // 진행 바를 파란색으로 출력
+    print_at_position(timer_position_x, timer_position_y + 1, progress_bar);
+
+    set_console_color(7);  // 기본 색상 복원
+}
+
+
+// 타이머 흔들리기 애니메이션 함수
+static void animate_timer(int remaining_time, int hint_position_y) {
+    COORD console_size = get_console_size();
+    int timer_position_x = (console_size.X - 60) / 2;  // 타이머 중앙 정렬
+    int timer_position_y = hint_position_y + 2;  // 힌트 바로 밑에 타이머 숫자 위치
+
+    // 타이머 숫자만 좌우로 약하게 흔들리도록 설정 (상하로는 움직이지 않음)
+    for (int i = 0; i < 10; ++i) {
+        // 좌우로만 움직이도록 x 좌표에서 -1 ~ 1 범위로만 흔들림
+        int offset_x = (rand() % 3) - 1;  // -1, 0, 1 중 하나 선택 (좌우로만 움직임)
+
+        // 타이머 숫자만 흔들리게 표시 (상하는 움직이지 않음)
+        set_console_color(12);  // 빨간색
+        print_at_position(timer_position_x + offset_x, timer_position_y, "                     ");
+        print_at_position(timer_position_x + offset_x, timer_position_y, "Time left: " + std::to_string(remaining_time) + "s");
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));  // 짧은 대기 시간
+    }
+
+    // 흔들린 후 타이머 숫자 위치 정리
+    print_at_position(timer_position_x, timer_position_y, "                     ");
+    print_at_position(timer_position_x, timer_position_y, "Time left: " + std::to_string(remaining_time) + "s");
+
+    set_console_color(7);  // 기본 색상으로 복원
+}
+
+// 점수 및 입력 관련 함수들
+// ---------------------------------
+
+// 점수를 파일에 저장하는 함수
+static void save_score(const std::string& student_number, const std::string& player_name, int score) {
+    std::ofstream ranking_file("ranking.txt", std::ios::app);
+    if (ranking_file.is_open()) {
+        std::time_t now = std::time(nullptr);  // 현재 시간
+        ranking_file << student_number << ", " << player_name << ": " << score << " points, " << now << "\n";
+        ranking_file.close();
+    }
+}
+
+// 유효한 숫자 입력을 받을 때까지 반복하는 함수
+static int get_valid_number() {
+    int num;
+    while (true) {
+        std::cin >> num;
+        if (std::cin.fail()) {
+            std::cin.clear(); // 입력 스트림 상태 초기화
+            std::cin.ignore(10000, '\n');
+            std::cout << "Please enter a valid number: ";
+        }
+        else {
+            return num; // 유효한 숫자일 경우 반환
+        }
+    }
+}
+
+// 난이도에 따른 점수 반환 함수
+static int get_score_for_difficulty(const std::string& difficulty) {
+    if (difficulty == "easy") return 1000;
+    else if (difficulty == "medium") return 1500;
+    else if (difficulty == "hard") return 2000;
+    else if (difficulty == "extreme") return 4000;
+    return 0; // Invalid difficulty returns 0
+}
+
+// 커서 위치 바로 밑에 출력하는 pause 함수
+static void pause() {
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+
+    int current_cursor_x = csbi.dwCursorPosition.X;
+    int current_cursor_y = csbi.dwCursorPosition.Y;
+
+    print_at_position(current_cursor_x, current_cursor_y + 1, "계속하려면 아무키나 누르십시오...");
+    std::cin.get(); std::cin.get();  // 버퍼 처리를 위해 두 번 입력 받음
+}
+
+// 스피너 애니메이션 함수
+static void spinner_animation(int duration_seconds) {
+    std::vector<std::string> spinner_frames = { "|", "/", "-", "\\" };
+    int num_frames = spinner_frames.size();
+    set_console_color(11);  // 파란색 스피너
+
+    auto start_time = std::chrono::system_clock::now();
+    int frame_index = 0;
+
+    while (true) {
+        auto current_time = std::chrono::system_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time).count();
+        if (elapsed >= duration_seconds) break;
+
+        clear_screen();
+        set_console_color(11);
+        print_border(40);
+        set_console_color(14);  // 노란색 텍스트
+        std::cout << "  Loading... " << spinner_frames[frame_index] << std::endl;
+        set_console_color(11);
+        print_border(40);
+
+        frame_index = (frame_index + 1) % num_frames;
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));  // 프레임 간 대기 시간
+    }
+
+    set_console_color(7);
+    clear_screen();
+}
+
+// 게임 흐름 관련 함수들
+// ---------------------------------
+
+bool confirm_info(const std::string& student_number, const std::string& player_name) {
+    clear_screen();
+    set_console_color(14);
+    print_border(40);
+    set_console_color(11);
+    std::cout << "         Confirm Player Information         " << std::endl;
+    set_console_color(14);
+    print_border(40);
+
+    set_console_color(7);
+    std::cout << "Your entered student number is: " << student_number << std::endl;
+    std::cout << "Your entered name is: " << player_name << std::endl;
+    std::cout << "Press Enter to confirm, or ESC to return to the lobby." << std::endl;
+
+    while (true) {
+        int key = _getch();
+        if (key == 13) {  // Enter 키
+            return true;  // 정보 확인 후 게임 계속 진행
+        }
+        else if (key == 27) {  // ESC 키
+            return false;  // 로비로 돌아가기
+        }
+    }
+}
+
+// 학번과 이름 입력을 받는 함수
+static bool get_student_info(std::string& student_number, std::string& player_name) {
+    clear_screen();
+    set_console_color(14);
+    print_border(40);
+    set_console_color(11);
+    std::cout << "          Player Registration            " << std::endl;
+    set_console_color(14);
+    print_border(40);
+
+    set_console_color(7);
+    std::cout << "Enter your student number (5 digits): ";
+    while (true) {
+        std::cin >> student_number;
+        if (student_number.length() == 5 && std::all_of(student_number.begin(), student_number.end(), ::isdigit)) break;
+        else {
+            set_console_color(12);
+            std::cout << "Invalid student number! Please enter exactly 5 digits.\n";
+            set_console_color(7);
+            std::cout << "Re-enter your student number: ";
+        }
+    }
+
+    // 한영키 전환 (한글로)
+    TOGGLE_HANGUL_KEY;
+
+    std::cout << "Enter your name (Korean): ";
+    player_name = get_input_with_backspace();  // 백스페이스 처리를 포함한 입력 처리
+
+    // 영어로 전환
+    TOGGLE_HANGUL_KEY;
+
+    std::cout << "\nSwitching back to English for gameplay...\n";
+    spinner_animation(3);
+
+    // 학번과 이름 확인 단계
+    if (!confirm_info(student_number, player_name)) {
+        clear_screen();
+        set_console_color(12);
+        std::cout << "Returning to the lobby..." << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        return false;  // ESC를 눌렀을 경우 로비로 돌아가도록 false 반환
+    }
+
+    clear_screen();
+    set_console_color(14);
+    print_border(40);
+    set_console_color(11);
+    std::cout << "Welcome, " << player_name << " (" << student_number << ")!" << std::endl;
+    set_console_color(14);
+    print_border(40);
+
+    std::cout << "\nPress any key to start the game...";
+    _getch();
+    return true;  // 정상적으로 정보를 확인했을 경우 true 반환
+}
+
+// 단어 선택 및 힌트 제공 함수
+static std::tuple<std::string, std::string> get_random_word(const std::string& category, std::set<std::string>& used_words) {
+    srand(static_cast<unsigned int>(time(0)));
+    const auto& category_words = word_categories[category];
+
+    std::vector<std::tuple<std::string, std::string, std::string>> available_words;
+    for (const auto& word_info : category_words) {
+        if (used_words.find(std::get<0>(word_info)) == used_words.end()) available_words.push_back(word_info);
+    }
+
+    if (available_words.empty()) return std::make_tuple("", "");
+    int index = rand() % available_words.size();
+    used_words.insert(std::get<0>(available_words[index]));
+    return std::make_tuple(std::get<0>(available_words[index]), std::get<2>(available_words[index]));
+}
+
+static std::string get_hint(const std::string& category, const std::string& word) {
+    for (const auto& word_info : word_categories[category]) {
+        if (std::get<0>(word_info) == word) return std::get<1>(word_info);
+    }
+    return "";
+}
+
+// 단어 준비 및 표시 함수
+static std::string prepare_word(const std::string& word) {
+    std::string prepared_word;
+    for (char letter : word) {
+        if (letter != '_') prepared_word += letter;
+    }
+    return prepared_word;
+}
+
+static std::string get_display_word(const std::string& word, const std::set<char>& correct_guesses) {
+    std::string display_word;
+    for (char letter : word) {
+        if (letter == '_') display_word += ' ';
+        else if (correct_guesses.find(letter) != correct_guesses.end()) display_word += letter;
+        else display_word += '_';
+        display_word += ' ';
+    }
+    return display_word;
+}
+
+// 행맨 그림 출력 함수
 static void print_hangman(int attempts_left) {
     std::vector<std::string> hangman_lines;
     if (attempts_left == 6) {
@@ -378,224 +808,100 @@ static void print_hangman(int attempts_left) {
     int start_y = 1;
 
     for (int i = 0; i < hangman_lines.size(); ++i) {
-        set_console_color(attempts_left > 0 ? 10 : 12);  // 초록색(10) 또는 빨간색(12)으로 설정
+        set_console_color(attempts_left > 0 ? 10 : 12);
         print_at_position(start_x, start_y + i, hangman_lines[i]);
     }
-    set_console_color(7);  // 기본 색상으로 복원
+    set_console_color(7);
 }
 
-
-// 콘솔 커서 숨기기 함수
-void hide_cursor() {
-    HANDLE consoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
-    CONSOLE_CURSOR_INFO info;
-    info.dwSize = 100;
-    info.bVisible = FALSE;
-    SetConsoleCursorInfo(consoleHandle, &info);
-}
-
-// 메뉴 항목을 탐색할 수 있는 함수
-int navigate_menu(const std::vector<std::string>& menu_items, const std::string& title) {
-    int selected_index = 0;
-    int menu_size = menu_items.size();
-
-    hide_cursor(); // 커서 숨기기
-
-    while (true) {
-        // 화면을 지우고 메뉴를 다시 출력
-        clear_screen();
-
-        set_console_color(14);
-        print_border(40);  // 상단 테두리
-        set_console_color(11);  // 파란색 텍스트
-        std::cout << "        " << title << "        " << std::endl;
-        set_console_color(14);
-        print_border(40);  // 하단 테두리
-
-        // 메뉴 항목을 출력
-        for (int i = 0; i < menu_size; ++i) {
-            if (i == selected_index) {
-                set_console_color(11);  // 선택된 항목은 파란색으로 표시
-                std::cout << ">> " << menu_items[i] << std::endl;
-            }
-            else {
-                set_console_color(7);  // 선택되지 않은 항목은 기본 색상
-                std::cout << "   " << menu_items[i] << std::endl;
-            }
-        }
-
-        // 키 입력을 기다림
-        int key = _getch();
-
-        if (key == 0 || key == 224) {  // 화살표 키 입력 시
-            key = _getch();  // 실제 화살표 키 값 가져오기
-
-            if (key == KEY_UP) {
-                selected_index = (selected_index - 1 + menu_size) % menu_size;  // 위쪽으로 이동
-            }
-            else if (key == KEY_DOWN) {
-                selected_index = (selected_index + 1) % menu_size;  // 아래쪽으로 이동
-            }
-        }
-        else if (key == KEY_ENTER) {
-            return selected_index;  // 엔터키를 누르면 선택된 인덱스 반환
-        }
-    }
-}
-
-// 텍스트를 우측 상단에 출력하는 함수
+// 게임 정보 출력 함수
 static void print_game_info(int attempts_left, const std::string& current_word, const std::set<char>& wrong_guesses, const std::string& difficulty) {
     COORD console_size = get_console_size();
     int hint_position_x = 30;
     int starting_y = 3;
 
-    set_console_color(14);  // 노란색으로 남은 시도 강조
+    set_console_color(14);
     print_at_position(hint_position_x, starting_y + 2, "Attempts left: " + std::to_string(attempts_left));
 
-    set_console_color(11);  // 파란색으로 현재 단어 상태 강조
+    set_console_color(11);
     print_at_position(hint_position_x, starting_y + 3, "Current word: " + current_word);
 
-    set_console_color(12);  // 빨간색으로 난이도 강조
-    print_at_position(hint_position_x, starting_y + 4, "Difficulty: " + difficulty);
+    set_difficulty_color(difficulty);  // 난이도에 따른 색상 설정
+    print_at_position(hint_position_x, starting_y + 4, "Difficulty: " + difficulty);  // 난이도 출력
 
-    set_console_color(13);  // 자주색으로 잘못된 추측 강조
+    set_console_color(13);
     std::string wrong_guesses_text = "Wrong guesses: ";
     for (char c : wrong_guesses) {
         wrong_guesses_text += c;
         wrong_guesses_text += ' ';
     }
     print_at_position(hint_position_x, starting_y + 5, wrong_guesses_text);
-    set_console_color(7);  // 기본 색상으로 복원
+    set_console_color(7);  // 기본 색상 복원
 }
 
-// 단어에서 밑줄을 제거하여 공백으로 변환
-static std::string prepare_word(const std::string& word) {
-    std::string prepared_word;
-    for (char letter : word) {
-        if (letter != '_') {
-            prepared_word += letter;  // 밑줄이 아닌 글자만 추가
+// 카테고리 선택 메뉴 탐색
+static int navigate_category_menu(const std::set<std::string>& used_words, const std::set<std::string>& completed_categories) {
+    std::vector<std::string> categories = {
+        "1. Animals", "2. Fruits", "3. Technology", "4. Nature",
+        "5. Sports", "6. Food", "7. History", "8. Medicine",
+        "9. Vehicles", "10.Instruments"
+    };
+
+    std::vector<std::string> category_info;
+    for (const auto& category : categories) {
+        std::string category_name = category.substr(3);
+        const auto& words = word_categories[category_name];
+        int easy_count = 0, medium_count = 0, hard_count = 0, extreme_count = 0, remaining_words = 0;
+
+        for (const auto& word_info : words) {
+            const std::string& word = std::get<0>(word_info);
+            const std::string& difficulty = std::get<2>(word_info);
+            if (used_words.find(word) == used_words.end()) {
+                remaining_words++;
+                if (difficulty == "easy") easy_count++;
+                else if (difficulty == "medium") medium_count++;
+                else if (difficulty == "hard") hard_count++;
+                else if (difficulty == "extreme") extreme_count++;
+            }
         }
-    }
-    return prepared_word;
-}
 
-// 현재 단어 상태 표시 함수 (밑줄 대신 공백으로 표시)
-static std::string get_display_word(const std::string& word, const std::set<char>& correct_guesses) {
-    std::string display_word;
-    for (char letter : word) {
-        if (letter == '_') {
-            display_word += ' ';  // 밑줄을 공백으로 표시
+        std::stringstream ss;
+        ss << category_name << " [" << remaining_words << " words] | ";
+
+        // 각 난이도별로 다른 색상 적용
+        set_console_color(10);  // 초록색 (easy)
+        ss << "E: " << easy_count << " ";
+        set_console_color(14);  // 노란색 (medium)
+        ss << "M: " << medium_count << " ";
+        set_console_color(12);  // 빨간색 (hard)
+        ss << "H: " << hard_count << " ";
+        set_console_color(13);  // 보라색 (extreme)
+        ss << "EX: " << extreme_count;
+
+        if (completed_categories.find(category_name) != completed_categories.end()) {
+            ss << " (Completed)";
         }
-        else if (correct_guesses.find(letter) != correct_guesses.end()) {
-            display_word += letter;  // 맞춘 글자는 그대로 표시
-        }
-        else {
-            display_word += '_';  // 맞추지 못한 글자는 밑줄로 표시
-        }
-        display_word += ' ';  // 각 글자 사이에 공백 추가
-    }
-    return display_word;
-}
-
-// 랜덤 단어 선택 함수 (카테고리 기반)
-static std::tuple<std::string, std::string> get_random_word(const std::string& category, std::set<std::string>& used_words) {
-    srand(static_cast<unsigned int>(time(0)));
-    const auto& category_words = word_categories[category];
-
-    // 사용하지 않은 단어 중에서 선택
-    std::vector<std::tuple<std::string, std::string, std::string>> available_words;
-    for (const auto& word_info : category_words) {
-        if (used_words.find(std::get<0>(word_info)) == used_words.end()) {
-            available_words.push_back(word_info);
-        }
+        category_info.push_back(ss.str());
     }
 
-    if (available_words.empty()) {
-        return std::make_tuple("", ""); // 사용할 수 있는 단어가 없을 때
-    }
-
-    int index = rand() % available_words.size();
-    used_words.insert(std::get<0>(available_words[index]));
-    return std::make_tuple(std::get<0>(available_words[index]), std::get<2>(available_words[index])); // 단어와 난이도를 반환
-}
-
-
-// 단어에 대한 힌트 제공 함수
-static std::string get_hint(const std::string& category, const std::string& word) {
-    for (const auto& word_info : word_categories[category]) {
-        if (std::get<0>(word_info) == word) {
-            return std::get<1>(word_info); // 단어에 대한 힌트 반환
-        }
-    }
-    return ""; // 단어가 없을 경우 빈 문자열 반환
-}
-
-// 점수를 파일에 저장하는 함수
-static void save_score(const std::string& student_number, const std::string& player_name, int score) {
-    std::ofstream ranking_file("ranking.txt", std::ios::app);
-    if (ranking_file.is_open()) {
-        std::time_t now = std::time(nullptr);  // 현재 시간
-        ranking_file << student_number << ", " << player_name << ": " << score << " points, " << now << "\n";
-        ranking_file.close();
-    }
-}
-
-// 유효한 숫자 입력을 받을 때까지 반복하는 함수
-static int get_valid_number() {
-    int num;
     while (true) {
-        std::cin >> num;
-        if (std::cin.fail()) {
-            std::cin.clear(); // 입력 스트림 상태 초기화
-            std::cin.ignore(10000, '\n');
-            std::cout << "Please enter a valid number: ";
+        int choice = navigate_menu(category_info, "   Select a Category");
+        std::string category_name = categories[choice].substr(3);
+
+        if (completed_categories.find(category_name) != completed_categories.end()) {
+            std::cout << "You have already completed all the words in this category! Please select another category.\n";
+            continue;
         }
-        else {
-            return num; // 유효한 숫자일 경우 반환
-        }
+        return choice;
     }
 }
 
-// 난이도에 따른 점수 반환 함수
-static int get_score_for_difficulty(const std::string& difficulty) {
-    if (difficulty == "easy") {
-        return 1000;
-    }
-    else if (difficulty == "medium") {
-        return 1500;
-    }
-    else if (difficulty == "hard") {
-        return 2000;
-    }
-    else if (difficulty == "extreme") {
-        return 4000;
-    }
-    return 0; // Invalid difficulty returns 0
-}
 
-
-// 커서 위치 바로 밑에 출력하는 pause 함수
-static void pause() {
-    // 콘솔 화면에서 현재 커서 위치 얻기
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
-
-    // 현재 커서 위치 가져오기
-    int current_cursor_x = csbi.dwCursorPosition.X;
-    int current_cursor_y = csbi.dwCursorPosition.Y;
-
-    // 커서 위치 바로 밑에 "계속하려면 아무키나 누르십시오..." 메시지 출력
-    print_at_position(current_cursor_x, current_cursor_y + 1, "계속하려면 아무키나 누르십시오...");
-
-    // 사용자로부터 입력을 받음 (두 번 입력 받는 이유는 버퍼 처리를 위해)
-    std::cin.get();
-    std::cin.get();
-}
-
+// 실제 행맨 게임 실행
 static bool play_hangman(const std::string& student_number, const std::string& player_name, const std::string& category, std::set<std::string>& used_words, int& attempts_left, int& score, int& bonus_streak, int& skip_chances) {
     clear_screen();
 
-    // 단어와 난이도를 선택
+    // 단어와 난이도 선택
     std::string original_word, difficulty;
     std::tie(original_word, difficulty) = get_random_word(category, used_words);
     std::string word = prepare_word(original_word);
@@ -606,76 +912,101 @@ static bool play_hangman(const std::string& student_number, const std::string& p
         return false;
     }
 
-    // 힌트와 단어의 상태 초기화
+    // 추측한 글자 저장을 위한 set
     std::set<char> correct_guesses;
     std::set<char> wrong_guesses;
     std::string display_word = get_display_word(word, correct_guesses);
     std::string hint = get_hint(category, original_word);
 
-    // 시도 횟수와 스킵 기회를 활용한 게임 진행
+    // 힌트가 출력될 위치 설정
+    int hint_position_x = 30;  // 게임 정보 및 힌트 출력 위치 설정
+    int hint_position_y = 1;   // 힌트의 y 좌표 설정
+
+    // 시도 횟수가 남아있는 동안 게임 진행
     while (attempts_left > 0) {
-        clear_screen();
-        print_hangman(attempts_left);
-        int hint_position_x = 30;
-        print_at_position(hint_position_x, 0, "Category: " + category);
-        print_at_position(hint_position_x, 1, "Hint: " + hint);
-        display_word = get_display_word(word, correct_guesses);
-        print_game_info(attempts_left, display_word, wrong_guesses, difficulty); // 난이도 출력
-        print_at_position(hint_position_x, 5, "Skip chances left: " + std::to_string(skip_chances)); // 스킵 기회 출력
+        int remaining_time = TIMER_DURATION;  // 타이머 시작
+        auto start_time = std::chrono::system_clock::now();
 
-        // 사용자의 입력을 받음
-        char guess;
-        COORD console_size = get_console_size();
-        int input_position_y = 10;
-        print_at_position(hint_position_x, input_position_y, "Guess a letter or type 'skip': ");
-        std::string input;
-        std::cin >> input;
+        // 타이머 동작
+        while (remaining_time > 0) {
+            // 한영키 처리 (게임 중에 한영키가 눌리면 다시 눌러서 원래 상태 유지)
+            HANDLE_HANGUL_KEY;
 
-        // 스킵 기능 처리
-        if (input == "skip") {
-            if (skip_chances > 0) {
-                skip_chances--; // 스킵 기회 소모
-                set_console_color(14);  // 노란색으로 텍스트 설정
-                std::cout << "You skipped the word! The correct word was: " << word << "\n";
-                set_console_color(7);  // 기본 색상으로 복원
-                pause();  // 사용자 입력 대기 (텍스트 아래에 출력)
-                return true; // 스킵 후 다음 단어로 진행
+            // 경과된 시간 계산
+            auto current_time = std::chrono::system_clock::now();
+            remaining_time = TIMER_DURATION - std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time).count();
+
+            // 화면을 지우고 현재 상태 출력
+            clear_screen();
+            print_hangman(attempts_left);
+            print_at_position(hint_position_x, 0, "Category: " + category);
+            print_at_position(hint_position_x, 1, "Hint: " + hint);
+            display_word = get_display_word(word, correct_guesses);
+            print_game_info(attempts_left, display_word, wrong_guesses, difficulty);
+            print_at_position(hint_position_x, 5, "Skip chances left (press 'Tab' to skip): " + std::to_string(skip_chances));
+            print_timer(remaining_time, hint_position_y);
+
+            // 남은 시간이 10초 이하일 때 타이머 애니메이션
+            if (remaining_time <= WARNING_THRESHOLD) {
+                animate_timer(remaining_time, hint_position_y);
             }
-            else {
-                set_console_color(12);  // 빨간색으로 텍스트 설정
-                std::cout << "No skip chances left!\n";
-                set_console_color(7);  // 기본 색상으로 복원
-                pause();  // 사용자 입력 대기 (텍스트 아래에 출력)
-                continue;
+
+            // 사용자가 키를 눌렀을 경우
+            if (_kbhit()) {
+                char guess = _getch();
+
+                // 영어 레이아웃으로 유지 (한영키가 눌렸을 경우)
+                KEEP_ENGLISH;
+
+                // 스킵을 위한 입력 (Tab 키를 사용)
+                if (guess == 9 && skip_chances > 0) {  // Tab 키의 ASCII 값은 9입니다
+                    skip_chances--;  // 스킵 기회를 차감
+
+                    // 스킵 메시지를 행맨 그림 아래에 출력
+                    int skip_message_position_y = 10;  // 행맨 그림 아래로 설정 (행맨 그림의 높이에 맞춤)
+                    int skip_message_position_x = 1;  // 적절한 x 좌표 설정
+
+                    set_console_color(14);  // 노란색으로 스킵 메시지 출력
+                    print_at_position(skip_message_position_x, skip_message_position_y, "You skipped the word!");
+                    print_at_position(skip_message_position_x, skip_message_position_y + 1, "The correct word was: " + word);  // 정답 출력
+                    print_at_position(skip_message_position_x, skip_message_position_y + 2, "Press Enter to continue...");
+                    set_console_color(7);  // 기본 색상으로 복원
+
+                    // Enter 키를 누를 때까지 대기
+                    while (_getch() != '\r');
+
+                    return true;  // 스킵 시 단어를 맞춘 것으로 처리하고 다음 단어로 이동
+                }
+
+                guess = tolower(guess);  // 입력된 문자를 소문자로 변환
+
+                // 이미 추측한 문자인지 확인
+                if (correct_guesses.find(guess) == correct_guesses.end() && wrong_guesses.find(guess) == wrong_guesses.end()) {
+                    if (word.find(guess) != std::string::npos) {
+                        correct_guesses.insert(guess);  // 맞춘 문자는 저장
+                        bonus_streak++;  // 보너스 스트릭 증가
+                        score += bonus_streak * 100;  // 보너스 점수 추가
+                        start_time = std::chrono::system_clock::now();  // 타이머 초기화
+                        break;  // 타이머 초기화 후 루프 탈출
+                    }
+                    else {
+                        wrong_guesses.insert(guess);  // 틀린 문자는 저장
+                        attempts_left--;  // 목숨 하나 줄어듦
+                        bonus_streak = 0;  // 보너스 스트릭 초기화
+                        break;  // 루프 탈출
+                    }
+                }
             }
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));  // 타이머 0.2초마다 갱신
         }
 
-        // 사용자가 입력한 단어가 유효한지 확인
-        if (input.length() == 1) {
-            guess = tolower(input[0]);
-        }
-        else {
-            std::cout << "Please enter a valid letter or 'skip'.\n";
-            continue;
-        }
-
-        // 이미 추측한 문자인지 확인
-        if (correct_guesses.find(guess) != correct_guesses.end() || wrong_guesses.find(guess) != wrong_guesses.end()) {
-            std::cout << "You already guessed that letter!\n";
-            pause();  // 사용자 입력 대기 (텍스트 아래에 출력)
-            continue;
-        }
-
-        // 단어에 맞는 문자인지 확인
-        if (word.find(guess) != std::string::npos) {
-            correct_guesses.insert(guess);
-            bonus_streak++; // 연속으로 맞춘 경우 보너스 스트릭 증가
-            score += bonus_streak * 100; // 보너스 점수 추가
-        }
-        else {
-            wrong_guesses.insert(guess);
-            attempts_left--;
-            bonus_streak = 0; // 틀렸을 때 보너스 스트릭 초기화
+        // 타이머 종료 시 목숨 감소
+        if (remaining_time <= 0) {
+            clear_screen();
+            std::cout << "Time's up! The correct word was: " << word << std::endl;
+            attempts_left--;  // 목숨 하나 줄어듦
+            pause();
+            break;
         }
 
         // 단어가 완성되었는지 확인
@@ -687,7 +1018,7 @@ static bool play_hangman(const std::string& student_number, const std::string& p
             }
         }
 
-        // 단어를 맞췄을 때
+        // 단어가 완성되었을 경우
         if (is_word_complete) {
             clear_screen();
             print_hangman(attempts_left);
@@ -698,16 +1029,16 @@ static bool play_hangman(const std::string& student_number, const std::string& p
             set_console_color(11);  // 파란색으로 맞춘 단어 강조
             std::cout << word << std::endl;
 
-            set_console_color(7);  // 기본 색상으로 복원
+            set_console_color(7);  // 기본 색상 복원
             int points = get_score_for_difficulty(difficulty);
             score += points;
 
             std::cout << "\nPress Enter to continue...";
-            while (std::cin.get() != '\n');
-            std::cin.get();
+            // Enter 키를 누를 때까지 대기, 입력 버퍼 비우기
+            while (_getch() != '\r');
+
             return true;
         }
-
     }
 
     // 시도 횟수가 모두 소진되었을 때
@@ -724,12 +1055,7 @@ static bool play_hangman(const std::string& student_number, const std::string& p
         // 점수 출력
         print_at_position(30, 5, "Your final score is: " + std::to_string(score) + " points.");
 
-        // "계속하려면 아무 키나 누르십시오..." 메시지를 점수 출력 바로 밑에 출력
-        print_at_position(30, 7, "");
-
-        // 사용자로부터 입력을 기다림
-        pause();  // 입력을 기다리는 pause 함수 호출
-
+        pause();  // 게임 오버 후 대기
         return false;  // 게임 오버 시 false 반환
     }
 
@@ -738,36 +1064,41 @@ static bool play_hangman(const std::string& student_number, const std::string& p
 
 
 
-// 로비 화면 출력 함수
+
+
+
+
+// 게임 메인 로비 및 흐름 제어
+// ---------------------------------
+
 static void display_lobby() {
     clear_screen();
-
-    set_console_color(14);  // 노란색 텍스트
-    print_border(40);  // 상단 테두리
-    set_console_color(11);  // 파란색 텍스트
+    set_console_color(14);
+    print_border(40);
+    set_console_color(11);
     std::cout << "        Welcome to Hangman Game        " << std::endl;
-    set_console_color(14);  // 노란색 텍스트
-    print_border(40);  // 하단 테두리
+    set_console_color(14);
+    print_border(40);
 
-    set_console_color(7);  // 기본 흰색 텍스트
+    set_console_color(7);
     std::cout << "1. Play Game\n";
     std::cout << "2. View Rules\n";
     std::cout << "3. View Rankings\n";
     std::cout << "4. Exit\n";
-    print_border(40);  // 메뉴 하단에 구분선 추가
+    print_border(40);
 }
 
 // 게임 규칙을 표시하는 함수
 static void show_rules() {
     clear_screen();
-    set_console_color(14);  // 노란색 텍스트
-    print_border(40);  // 상단 테두리
-    set_console_color(11);  // 파란색 텍스트
-    std::cout << "             Game Rules            " << std::endl;
-    set_console_color(14);  // 노란색 텍스트
-    print_border(40);  // 하단 테두리
+    set_console_color(14);
+    print_border(40);
+    set_console_color(11);
+    std::cout << "              Game Rules            " << std::endl;
+    set_console_color(14);
+    print_border(40);
 
-    set_console_color(7);  // 기본 흰색 텍스트
+    set_console_color(7);
     std::cout << "1. 단어를 한 글자씩 추측하세요.\n";
     std::cout << "2. 틀린 추측을 6번 할 수 있습니다. attenmps left가 다 없어지면 게임 오버됩니다.\n";
     std::cout << "3. 틀린 추측을 할 때마다 행맨의 일부가 그려집니다.\n";
@@ -780,14 +1111,11 @@ static void show_rules() {
     std::cout << "   - 어려움: 2000점\n";
     std::cout << "   - 익스트림: 4000점\n";
     std::cout << "8. 연속으로 철자를 맞출 경우 추가로 보너스를 받습니다.\n";
-    std::cout << "   - 글자를 맞출 때마다 bonus_streak 변수가 1씩 증가\n";
-    std::cout << "   - 맞출 때마다 bonus_streak * 100 점수가 추가\n";
-    std::cout << "   - 틀린 글자를 입력하면 bonus_streak이 0으로 초기화\n";
-    print_border(40);  // 하단 구분선 추가
+    print_border(40);
 
-    set_console_color(7);  // 기본 색상 복원
+    set_console_color(7);
     std::cout << "\nPress any key to return to the lobby...";
-    while (std::cin.get() != '\n');  // '\n'이 나올 때까지 계속 버퍼를 비움
+    while (std::cin.get() != '\n');
 }
 
 // 랭킹을 표시하는 함수
@@ -798,15 +1126,14 @@ static void show_ranking() {
 
     std::vector<std::tuple<std::string, int, std::time_t>> rankings;
     clear_screen();
-    set_console_color(14);  // 노란색 텍스트
-    print_border(40);  // 상단 테두리
-    set_console_color(11);  // 파란색 텍스트
-    std::cout << "           Player Rankings           " << std::endl;
-    set_console_color(14);  // 노란색 텍스트
-    print_border(40);  // 하단 테두리
+    set_console_color(14);
+    print_border(40);
+    set_console_color(11);
+    std::cout << "            Player Rankings           " << std::endl;
+    set_console_color(14);
+    print_border(40);
 
-    set_console_color(7);  // 기본 흰색 텍스트
-
+    set_console_color(7);
     if (ranking_file.is_open()) {
         bool has_content = false;
         while (getline(ranking_file, line)) {
@@ -836,15 +1163,11 @@ static void show_ranking() {
     }
 
     if (!rankings.empty()) {
-        // 점수를 기준으로 정렬 (점수가 같으면 날짜가 오래된 순으로 정렬)
         std::sort(rankings.begin(), rankings.end(), [](const auto& a, const auto& b) {
-            if (std::get<1>(a) == std::get<1>(b)) {
-                return std::get<2>(a) < std::get<2>(b);  // 점수가 같으면 시간으로 정렬
-            }
-            return std::get<1>(a) > std::get<1>(b);  // 점수로 정렬
+            if (std::get<1>(a) == std::get<1>(b)) return std::get<2>(a) < std::get<2>(b);
+            return std::get<1>(a) > std::get<1>(b);
             });
 
-        // 순위를 표시하며 출력
         int rank = 1;
         for (const auto& entry : rankings) {
             std::cout << rank << ". " << std::get<0>(entry) << ": " << std::get<1>(entry) << " points\n";
@@ -852,81 +1175,10 @@ static void show_ranking() {
         }
     }
 
-    print_border(40);  // 하단 구분선 추가
-
-    set_console_color(7);  // 기본 색상 복원
+    print_border(40);
+    set_console_color(7);
     std::cout << "\nPress any key to return to the lobby...";
-    while (std::cin.get() != '\n');  // '\n'이 나올 때까지 계속 버퍼를 비움
-}
-
-
-static int navigate_category_menu(const std::set<std::string>& used_words, const std::set<std::string>& completed_categories) {
-    std::vector<std::string> categories = {
-        "1. Animals",
-        "2. Fruits",
-        "3. Technology",
-        "4. Nature",
-        "5. Sports",
-        "6. Food",
-        "7. History",
-        "8. Medicine",
-        "9. Vehicles",
-        "10.Instruments"
-    };
-
-    // 각 카테고리의 남은 단어 수와 난이도별 단어 수를 계산
-    std::vector<std::string> category_info;
-    for (const auto& category : categories) {
-        std::string category_name = category.substr(3);  // "1. " 등 숫자 제거 후 실제 카테고리 이름 추출
-        const auto& words = word_categories[category_name];
-
-        int easy_count = 0, medium_count = 0, hard_count = 0, extreme_count = 0, remaining_words = 0;
-
-        // 사용되지 않은 단어를 기준으로 난이도별 단어 수를 계산
-        for (const auto& word_info : words) {
-            const std::string& word = std::get<0>(word_info);
-            const std::string& difficulty = std::get<2>(word_info);
-
-            if (used_words.find(word) == used_words.end()) {
-                remaining_words++;
-                if (difficulty == "easy") {
-                    easy_count++;
-                }
-                else if (difficulty == "medium") {
-                    medium_count++;
-                }
-                else if (difficulty == "hard") {
-                    hard_count++;
-                }
-                else if (difficulty == "extreme") {
-                    extreme_count++;
-                }
-            }
-        }
-
-        // 카테고리 정보에 남은 단어 수와 난이도별 단어 수를 간결하게 표시
-        std::stringstream ss;
-        ss << category_name << " [" << remaining_words << " words] | "
-            << "E: " << easy_count << " M: " << medium_count << " H: " << hard_count << " EX: " << extreme_count;
-
-        // 완료된 카테고리는 회색으로 표시
-        if (completed_categories.find(category_name) != completed_categories.end()) {
-            ss << " (Completed)";
-        }
-        category_info.push_back(ss.str());
-    }
-
-    // 메뉴 탐색 시 완료된 카테고리는 선택할 수 없도록 처리
-    while (true) {
-        int choice = navigate_menu(category_info, "   Select a Category");
-        std::string category_name = categories[choice].substr(3);  // 숫자를 제외한 카테고리 이름 추출
-
-        if (completed_categories.find(category_name) != completed_categories.end()) {
-            std::cout << "You have already completed all the words in this category! Please select another category.\n";
-            continue;  // 이미 완료된 카테고리면 다시 선택을 요청
-        }
-        return choice;
-    }
+    while (std::cin.get() != '\n');
 }
 
 // 메인 로비 함수
@@ -936,27 +1188,21 @@ static void lobby() {
     std::set<std::string> completed_categories;
     int score = 0;
     int bonus_streak = 0;
-    int attempts_left = 6;  // 목숨을 유지하기 위한 초기화
-    int skip_chances = 3; // 스킵 기회 3번
+    int attempts_left = 6;
+    int skip_chances = 3;
 
     std::vector<std::string> menu_items = {
-        "1. Play Game",
-        "2. View Rules",
-        "3. View Rankings",
-        "4. Exit"
+        "1. Play Game", "2. View Rules", "3. View Rankings", "4. Exit"
     };
 
     while (true) {
-        int choice = navigate_menu(menu_items, "Welcome to Hangman Game");  // 타이틀 인수 추가
-
+        int choice = navigate_menu(menu_items, "Welcome to Hangman Game");
         switch (choice) {
-        case 0:  // Play Game 선택
-            std::cout << "Enter your student number: ";
-            std::cin >> student_number;
-            std::cout << "Enter your name: ";
-            std::cin >> player_name;
-
-            // 게임 시작 시 전체 진행 상태 초기화
+        case 0:
+            if (!get_student_info(student_number, player_name)) {
+                // ESC가 눌렸을 경우 즉시 로비로 돌아감
+                break;
+            }
             used_words.clear();
             completed_categories.clear();
             score = 0;
@@ -965,9 +1211,7 @@ static void lobby() {
             skip_chances = 3;
 
             while (true) {
-                // 카테고리 선택 시 화살표 키 탐색 가능, 타이틀을 "Select a Category"로 변경
                 int category_choice = navigate_category_menu(used_words, completed_categories);
-
                 std::string category;
                 switch (category_choice) {
                 case 0: category = "Animals"; break;
@@ -985,16 +1229,12 @@ static void lobby() {
                     continue;
                 }
 
-                // 이미 완료된 카테고리인지 확인
                 if (completed_categories.find(category) != completed_categories.end()) {
                     std::cout << "You have already completed all the words in this category!\n";
                     continue;
                 }
 
-                // Hangman 게임 시작
                 bool word_guessed = play_hangman(student_number, player_name, category, used_words, attempts_left, score, bonus_streak, skip_chances);
-
-                // 카테고리의 모든 단어가 사용되었는지 확인
                 const auto& category_words = word_categories[category];
                 bool all_words_used = true;
                 for (const auto& word_info : category_words) {
@@ -1004,25 +1244,20 @@ static void lobby() {
                     }
                 }
 
-                // 모든 단어가 사용된 경우 해당 카테고리를 완료된 목록에 추가
                 if (all_words_used) {
                     completed_categories.insert(category);
                     std::cout << "\nYou have completed all the words in the " << category << " category!\n";
                 }
 
-                // 게임 오버일 경우 목숨 초기화
                 if (!word_guessed || attempts_left == 0) {
                     std::cout << "\nYour final score is: " << score << std::endl;
-                    save_score(student_number, player_name, score);  // 점수 저장
-
-                    // 모든 상태 초기화
+                    save_score(student_number, player_name, score);
                     used_words.clear();
                     completed_categories.clear();
                     score = 0;
                     bonus_streak = 0;
-                    attempts_left = 6;  // 게임 오버 시 목숨 초기화
+                    attempts_left = 6;
                     skip_chances = 3;
-
                     break;
                 }
             }
@@ -1042,8 +1277,10 @@ static void lobby() {
     }
 }
 
-
+// 메인 함수
 int main() {
+    // 이중 버퍼링 초기화
+    initialize_double_buffer();
     lobby();  // 게임 로비 호출
     return 0;
 }
