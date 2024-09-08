@@ -2,7 +2,6 @@
 - [한국어 버전](./README_kr.md)
 
 
----
 
 # Hangman Game (C++ Console Application)
 
@@ -40,6 +39,12 @@ This game is written in **C++** and uses basic **Windows API functions** for con
 - **Customizable Colors and Animations**: 
     - Each difficulty level is associated with different colors: Green for Easy, Yellow for Medium, Red for Hard, and Purple for Extreme. Additionally, a **progress bar** shows how much time is left for each guess.
     - Hangman drawing changes after each wrong guess, and as time runs out, a shaking timer adds extra pressure.
+
+- **Double Buffering**: 
+    - The game uses double buffering to ensure smooth console updates and prevent flickering during gameplay.
+
+- **Loading Animations**: 
+    - Several animations enhance user experience, including a loading spinner, score animations, and welcome messages.
 
 ## How to Play
 
