@@ -304,6 +304,10 @@ std::map<std::string, std::vector<std::tuple<std::string, std::string, std::stri
     }}
 };
 
+bool is_alphabet(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+}
+
 std::string get_input_with_backspace() {
     std::string input;
     char ch;
@@ -363,6 +367,27 @@ COORD get_console_size() {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     GetConsoleScreenBufferInfo(hMainConsole, &csbi);
     return csbi.dwSize;
+}
+
+void handle_timeout(const std::string& word, int& attempts_left) {
+    clear_screen();
+
+    // 타임아웃 메시지 출력
+    set_console_color(12);  // 빨간색으로 타임아웃 메시지 표시
+    std::cout << "\n\nTime's up! The correct word was: " << word << std::endl;
+
+    // 남은 시도 횟수 출력
+    set_console_color(14);  // 노란색으로 남은 시도 횟수 표시
+    std::cout << "\nAttempts left: " << attempts_left << std::endl;
+
+    // Enter 키를 눌러서 계속하도록 메시지 출력
+    set_console_color(10);  // 초록색으로 안내 메시지 표시
+    std::cout << "\nPress Enter to continue..." << std::endl;
+
+    set_console_color(7);  // 기본 색상으로 복원
+
+    // Enter 키를 누를 때까지 대기
+    while (_getch() != '\r');
 }
 
 // 최소한의 영역만 업데이트 (화면을 지우지 않음)
@@ -441,6 +466,74 @@ int navigate_menu(const std::vector<std::string>& menu_items, const std::string&
     }
 }
 
+// 화면 흔들기 애니메이션
+void shake_screen() {
+    COORD console_size = get_console_size();
+    int offset_range = 2;  // 흔들리는 범위 (좌우로 움직이는 범위)
+
+    for (int i = 0; i < 10; ++i) {
+        int offset_x = (rand() % (offset_range * 2 + 1)) - offset_range;  // -offset_range에서 +offset_range까지의 값 생성
+        int offset_y = 0;  // 상하로는 움직이지 않음
+
+        // 흔들린 위치에 "Time's up!" 메시지를 출력
+        print_at_position(console_size.X / 2 + offset_x, console_size.Y / 2 + offset_y, "Time's up!");
+
+        // 약간의 지연을 주어 흔들리는 효과 부여
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        clear_screen();  // 화면을 지운 후 반복하여 흔들림 효과
+    }
+}
+
+// 점수 애니메이션 (점수가 올라가는 효과)
+void score_animation(int current_score, int new_score) {
+    int score_increment = (new_score - current_score) / 10;  // 점수를 10 단계로 나누어 상승시킴
+
+    // 점수를 스코어 표시되는 위치에 맞추기 위해 위치 설정
+    int score_position_x = 30;  // 스코어 표시 X 위치
+    int score_position_y = 9;   // 스코어 표시 Y 위치
+
+    for (int i = 0; i <= 10; ++i) {
+        int displayed_score = current_score + score_increment * i;  // 점점 증가하는 점수
+
+        set_console_color(10);  // 초록색으로 점수 표시
+        // 기존 스코어 자리에 스코어 애니메이션을 출력하고, "points" 텍스트를 추가
+        print_at_position(score_position_x, score_position_y, "Score: " + std::to_string(displayed_score) + " points");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));  // 애니메이션 속도 조절
+    }
+
+    // 최종 스코어 출력
+    print_at_position(score_position_x, score_position_y, "Score: " + std::to_string(new_score) + " points");
+
+    set_console_color(7);  // 기본 색상으로 복원
+}
+
+
+// 로딩 애니메이션 (점점 길어지는 점 표시)
+void loading_animation() {
+    std::string loading_text = "Loading";
+
+    for (int i = 0; i < 10; ++i) {
+        std::string dots(i % 4, '.');  // 점의 개수가 늘어남
+        print_at_position(30, 10, loading_text + dots);  // 로딩 메시지 출력
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));  // 지연 시간
+        clear_screen();  // 화면을 지우고 반복하여 애니메이션 효과
+    }
+
+    set_console_color(7);  // 기본 색상으로 복원
+}
+
+// 환영 메시지 애니메이션
+void welcome_animation() {
+    std::string welcome_message = "Welcome to Hangman Game!";
+
+    for (int i = 0; i <= welcome_message.length(); ++i) {
+        print_at_position(30, 10, welcome_message.substr(0, i));  // 한 글자씩 출력
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));  // 지연 시간
+    }
+
+    set_console_color(7);  // 기본 색상으로 복원
+}
 
 // 타이머 UI를 출력하는 함수
 static void print_timer(int remaining_time, int hint_position_y) {
@@ -480,6 +573,32 @@ static void print_timer(int remaining_time, int hint_position_y) {
     set_console_color(7);  // 기본 색상 복원
 }
 
+#include <thread>
+
+//축하 메시지, 점수 애니메이션을 동시에 실행하는 함수
+void play_concurrent_celebration(const std::string& player_name, const std::string& word, int current_score, int new_score) {
+    // 축하 메시지와 점수 애니메이션 출력
+    int score_position_x = 30;  // 스코어 표시 X 위치
+    int score_position_y = 5;   // 스코어 표시 Y 위치
+
+    // 축하 메시지 출력
+    set_console_color(10);  // 초록색으로 축하 메시지 출력
+    print_at_position(score_position_x, score_position_y - 3, "Congratulations, " + player_name + "! You've guessed the word:");
+    set_console_color(11);  // 파란색으로 맞춘 단어 강조
+    print_at_position(score_position_x, score_position_y - 2, word);
+
+    // 점수 애니메이션 실행
+    score_animation(current_score, new_score);
+
+    // "Press Enter to continue..." 메시지를 기다리기
+    set_console_color(7);  // 기본 색상으로 복원
+    print_at_position(score_position_x, score_position_y + 3, "Press Enter to continue...");
+
+    // Enter 키 입력 대기
+    while (_getch() != '\r');
+
+    set_console_color(7);  // 기본 색상 복원
+}
 
 // 타이머 흔들리기 애니메이션 함수
 static void animate_timer(int remaining_time, int hint_position_y) {
@@ -595,7 +714,7 @@ bool confirm_info(const std::string& student_number, const std::string& player_n
     set_console_color(14);
     print_border(40);
     set_console_color(11);
-    std::cout << "         Confirm Player Information         " << std::endl;
+    std::cout << "       Confirm Player Information         " << std::endl;
     set_console_color(14);
     print_border(40);
 
@@ -815,7 +934,7 @@ static void print_hangman(int attempts_left) {
 }
 
 // 게임 정보 출력 함수
-static void print_game_info(int attempts_left, const std::string& current_word, const std::set<char>& wrong_guesses, const std::string& difficulty) {
+static void print_game_info(int attempts_left, const std::string& current_word, const std::set<char>& wrong_guesses, const std::string& difficulty, int score) {
     COORD console_size = get_console_size();
     int hint_position_x = 30;
     int starting_y = 3;
@@ -836,6 +955,10 @@ static void print_game_info(int attempts_left, const std::string& current_word, 
         wrong_guesses_text += ' ';
     }
     print_at_position(hint_position_x, starting_y + 5, wrong_guesses_text);
+
+    // 실시간 점수 출력
+    set_console_color(10);  // 초록색으로 점수 출력
+    print_at_position(hint_position_x, starting_y + 6, "Score: " + std::to_string(score) + " points");
     set_console_color(7);  // 기본 색상 복원
 }
 
@@ -942,7 +1065,7 @@ static bool play_hangman(const std::string& student_number, const std::string& p
             print_at_position(hint_position_x, 0, "Category: " + category);
             print_at_position(hint_position_x, 1, "Hint: " + hint);
             display_word = get_display_word(word, correct_guesses);
-            print_game_info(attempts_left, display_word, wrong_guesses, difficulty);
+            print_game_info(attempts_left, display_word, wrong_guesses, difficulty, score);
             print_at_position(hint_position_x, 5, "Skip chances left (press 'Tab' to skip): " + std::to_string(skip_chances));
             print_timer(remaining_time, hint_position_y);
 
@@ -953,7 +1076,15 @@ static bool play_hangman(const std::string& student_number, const std::string& p
 
             // 사용자가 키를 눌렀을 경우
             if (_kbhit()) {
-                char guess = _getch();
+                int key = _getch();  // 첫 번째 키 입력
+
+                // 화살표 키나 특수 키는 두 번의 입력으로 이루어짐 (첫 번째 입력이 224 또는 0)
+                if (key == 0 || key == 224) {
+                    _getch();  // 두 번째 키 입력을 처리하고 무시
+                    continue;  // 화살표 키는 무시
+                }
+
+                char guess = tolower(key);  // 입력된 문자를 소문자로 변환
 
                 // 영어 레이아웃으로 유지 (한영키가 눌렸을 경우)
                 KEEP_ENGLISH;
@@ -978,23 +1109,36 @@ static bool play_hangman(const std::string& student_number, const std::string& p
                     return true;  // 스킵 시 단어를 맞춘 것으로 처리하고 다음 단어로 이동
                 }
 
-                guess = tolower(guess);  // 입력된 문자를 소문자로 변환
+                // 입력된 문자가 알파벳인지 확인
+                if (is_alphabet(guess)) {
+                    // 이미 추측한 문자인지 확인
+                    if (correct_guesses.find(guess) == correct_guesses.end() && wrong_guesses.find(guess) == wrong_guesses.end()) {
+                        if (word.find(guess) != std::string::npos) {
+                            correct_guesses.insert(guess);  // 맞춘 문자는 저장
+                            bonus_streak++;  // 보너스 스트릭 증가
 
-                // 이미 추측한 문자인지 확인
-                if (correct_guesses.find(guess) == correct_guesses.end() && wrong_guesses.find(guess) == wrong_guesses.end()) {
-                    if (word.find(guess) != std::string::npos) {
-                        correct_guesses.insert(guess);  // 맞춘 문자는 저장
-                        bonus_streak++;  // 보너스 스트릭 증가
-                        score += bonus_streak * 100;  // 보너스 점수 추가
-                        start_time = std::chrono::system_clock::now();  // 타이머 초기화
-                        break;  // 타이머 초기화 후 루프 탈출
+                            // 남은 시간에 기반한 추가 보너스 점수 계산
+                            int time_bonus = static_cast<int>((static_cast<double>(remaining_time) / TIMER_DURATION) * 100);
+
+                            // 기본 점수 + (보너스 스트릭 점수 + 시간 보너스)
+                            score += (bonus_streak * 100) + time_bonus;  // 각 맞춤에 대한 점수는 단어 난이도에 따라 달라질 수 있음
+
+                            start_time = std::chrono::system_clock::now();  // 타이머 초기화
+                            break;  // 타이머 초기화 후 루프 탈출
+                        }
+                        else {
+                            wrong_guesses.insert(guess);  // 틀린 문자는 저장
+                            attempts_left--;  // 목숨 하나 줄어듦
+                            bonus_streak = 0;  // 보너스 스트릭 초기화
+                            break;  // 루프 탈출
+                        }
                     }
-                    else {
-                        wrong_guesses.insert(guess);  // 틀린 문자는 저장
-                        attempts_left--;  // 목숨 하나 줄어듦
-                        bonus_streak = 0;  // 보너스 스트릭 초기화
-                        break;  // 루프 탈출
-                    }
+                }
+                else {
+                    // 알파벳이 아닌 문자가 입력되면 무시
+                    set_console_color(12);  // 빨간색으로 경고 메시지 출력
+                    print_at_position(hint_position_x, hint_position_y + 3, "Invalid input! Please enter only alphabets.");
+                    set_console_color(7);  // 기본 색상으로 복원
                 }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(200));  // 타이머 0.2초마다 갱신
@@ -1003,9 +1147,12 @@ static bool play_hangman(const std::string& student_number, const std::string& p
         // 타이머 종료 시 목숨 감소
         if (remaining_time <= 0) {
             clear_screen();
-            std::cout << "Time's up! The correct word was: " << word << std::endl;
+            set_console_color(12);  // 타임 아웃 메시지의 색상을 변경
+            shake_screen();  // 타임아웃 시 화면 흔들기 애니메이션 실행
+            print_at_position(30, 10, "Time's up! The correct word was: " + word);  // 타임아웃 메시지 출력
+            std::cout << "Press Enter to continue...";
+            while (_getch() != '\r');  // Enter 키를 누를 때까지 대기
             attempts_left--;  // 목숨 하나 줄어듦
-            pause();
             break;
         }
 
@@ -1022,19 +1169,26 @@ static bool play_hangman(const std::string& student_number, const std::string& p
         if (is_word_complete) {
             clear_screen();
             print_hangman(attempts_left);
-            print_game_info(attempts_left, display_word, wrong_guesses, difficulty);
+            print_game_info(attempts_left, display_word, wrong_guesses, difficulty,score);
 
             set_console_color(10);  // 초록색으로 축하 메시지 출력
-            std::cout << "\n\nCongratulations, " << player_name << "! You've guessed the word: ";
+
+            // 축하 메시지를 두 줄 더 내리기 위해 앞에 줄바꿈 추가
+            std::cout << "\n\n\nCongratulations, " << player_name << "! You've guessed the word: ";
             set_console_color(11);  // 파란색으로 맞춘 단어 강조
             std::cout << word << std::endl;
 
-            set_console_color(7);  // 기본 색상 복원
-            int points = get_score_for_difficulty(difficulty);
-            score += points;
-
+            // "Press Enter to continue..." 메시지를 바로 밑에 출력
+            set_console_color(7);  // 기본 색상으로 복원
             std::cout << "\nPress Enter to continue...";
-            // Enter 키를 누를 때까지 대기, 입력 버퍼 비우기
+
+            // 스코어 애니메이션을 네 줄 밑으로 내리기 위해 줄바꿈 추가
+            std::cout << "\n\n\n\n";
+            int points = get_score_for_difficulty(difficulty);
+            int new_score = score + points;
+            score_animation(score, new_score);  // 점수 상승 애니메이션 실행
+            score = new_score;
+
             while (_getch() != '\r');
 
             return true;
@@ -1061,11 +1215,6 @@ static bool play_hangman(const std::string& student_number, const std::string& p
 
     return true;
 }
-
-
-
-
-
 
 
 // 게임 메인 로비 및 흐름 제어
@@ -1183,6 +1332,8 @@ static void show_ranking() {
 
 // 메인 로비 함수
 static void lobby() {
+    loading_animation();
+
     std::string student_number, player_name;
     std::set<std::string> used_words;
     std::set<std::string> completed_categories;
@@ -1281,6 +1432,11 @@ static void lobby() {
 int main() {
     // 이중 버퍼링 초기화
     initialize_double_buffer();
+
+    // 환영 메시지 애니메이션 실행
+    welcome_animation();
+
+
     lobby();  // 게임 로비 호출
     return 0;
 }
