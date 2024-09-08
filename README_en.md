@@ -14,7 +14,7 @@ This game is written in **C++** and uses basic **Windows API functions** for con
 ## Features
 - **Multiple Categories**: 
     - Categories include **Animals**, **Fruits**, **Technology**, and more. Each category contains a list of words with different difficulty levels. Players can freely choose a category to play.
-    - Categories contain words with varying difficulty levels (Easy, Medium, Hard, Extreme), so players can challenge themselves.
+    - Categories contain words with varying difficulty levels (Easy, Medium, Hard, Extreme), but difficulty levels are randomly selected.
 
 - **Difficulty Levels**: 
     - Easy words offer 1000 points, while Extreme words offer 4000 points.
