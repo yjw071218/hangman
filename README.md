@@ -58,8 +58,4 @@ Then, run the game using:
 - Ensure the `ranking.txt` file is in the same directory as the executable for the ranking system to function correctly.
 - The game is designed for Windows using the Windows API for console color management and screen handling.
 
-## Future Enhancements
-- Adding more categories and words.
-- Implementing a multiplayer mode for added fun.
-
 Enjoy playing the game!
