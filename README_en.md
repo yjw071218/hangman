@@ -1,3 +1,5 @@
+- [영어 버전](./README_en.md)
+- [한국어 버전](./README_kr.md)
 
 # Hangman Game (C++ Console Application)
 
