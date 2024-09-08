@@ -1,4 +1,4 @@
-- [영어 버전](./README_en.md) - [한국어 버전](./README_kr.md)
+ [영어 버전](./README_en.md)   [한국어 버전](./README_kr.md)
 
 # 행맨 게임 (C++ 콘솔 애플리케이션)
 
