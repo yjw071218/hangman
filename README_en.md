@@ -22,7 +22,7 @@ This game is written in **C++** and uses basic **Windows API functions** for con
     - Each difficulty level influences how challenging the word is and how many incorrect guesses it takes to lose.
 
 - **Bonus Streak**: 
-    - For every consecutive correct letter guess, players earn additional points (100 points per streak).
+    - For every consecutive correct letter guess, players earn additional points.
     - This incentivizes careful and thoughtful guesses instead of random attempts.
 
 - **Ranking System**: 
@@ -70,7 +70,7 @@ This game is written in **C++** and uses basic **Windows API functions** for con
       - Medium: 1500 points
       - Hard: 2000 points
       - Extreme: 4000 points
-    - **Bonus points**: You earn 100 points for each consecutive correct guess.
+    - **Bonus points**: You earn bonus points for each consecutive correct guess.
 
 6. **Game Over**: 
     - You have 6 incorrect guesses before the game ends. The game will also end if the timer runs out.
