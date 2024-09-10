@@ -3,6 +3,8 @@
 
 
 
+### **[English Version]**
+
 # Hangman Game (C++ Console Application)
 
 ## Overview
@@ -80,36 +82,116 @@ This game is written in **C++** and uses basic **Windows API functions** for con
 
 ## Game Logic
 
-- **Word Selection**: 
-    - Words are chosen randomly from the selected category, and once a word is guessed or skipped, it is removed from the pool.
-  
-- **Hangman Graphics**: 
-    - The Hangman figure is progressively drawn with each incorrect guess. After 6 incorrect guesses, the player loses, and the final figure is displayed along with the message “GAME OVER.”
-  
-- **Timer Animation**: 
-    - A progress bar and timer are displayed on the screen to indicate how much time remains for each guess. If the time drops below 10 seconds, the timer starts shaking to increase the sense of urgency.
+### Word Selection
+- Words are chosen randomly from the selected category, and once a word is guessed or skipped, it is removed from the pool to prevent repetition. Players continue guessing words within the chosen category until all words have been guessed or the player runs out of chances.
 
-- **Score Calculation**: 
-    - Points are awarded based on word difficulty. If the player guesses letters consecutively without any mistakes, they receive a bonus streak multiplier. Points are displayed on the screen in real-time.
+### Hangman Drawing
+- The hangman figure is progressively drawn with each incorrect guess. Players start with 6 lives, and each incorrect guess reduces the number of lives by one. After 6 incorrect guesses, the full hangman figure is drawn, and the game ends with a "GAME OVER" message.
+
+### Scoring System
+- Players earn points based on the difficulty of the word:
+  - Easy: 1000 points
+  - Medium: 1500 points
+  - Hard: 2000 points
+  - Extreme: 4000 points
+- Bonus points are awarded for consecutive correct letter guesses (100 points per streak).
+- Players can accumulate scores across multiple categories, with their total score being saved in the ranking system once the game ends.
+- If players guess words consecutively without losing a life, they earn a 10% bonus for clearing a category without skipping any words.
+
+### Timer System
+- Each guess must be made within a **30-second** time limit, indicated by a progress bar and a countdown timer on the screen. If the time limit expires, the player loses a life.
+- When the remaining time falls below **10 seconds**, the timer starts shaking to visually alert the player.
+
+### Skip Chances
+- Players can skip difficult words up to 3 times per game. Skipping a word does not affect the player’s lives, but reduces the number of available skips.
+
+### Rankings and Score Saving
+- At the end of the game, the player's **student number**, **name**, and **score** are saved in a `ranking.txt` file. Players can view rankings to compare scores with previous players, sorted by score and timestamp.
 
 ## Menu Options
 
-- **Play Game**: 
-    - Start the game by entering player information and selecting a category.
+1. **Play Game**: 
+    - Start the game by entering your student number and name, then choose a category to begin guessing words.
   
-- **View Rules**: 
-    - Displays the game rules and explains how scoring works.
-  
-- **View Rankings**: 
-    - Shows a leaderboard of previous players based on their scores.
+2. **View Rules**: 
+    - Displays the rules of the game, including scoring details and gameplay instructions.
 
-- **Exit**: 
-    - Exit the game and return to the terminal.
+3. **View Rankings**: 
+    - Shows the leaderboard with previous players' scores, sorted by highest score and timestamp.
+
+4. **Exit**: 
+    - Exits the game and returns to the terminal.
 
 ## Troubleshooting
 
 ### Common Issues
 
+1. **Ranking System Not Saving**:
+    - Ensure that the game has write permissions to the folder where it is saving `ranking.txt`.
+    - Verify that the file is not open in another program while the game is running.
+
+2. **Input Issues (Backspace Not Working)**:
+    - On some terminals, the backspace key may not behave as expected. The game handles this by allowing you to press backspace and visually remove characters.
+
+3. **Console Colors Not Displaying Properly**:
+    - The game uses Windows API to handle colors in the console. Ensure that your terminal supports colors, and you are running the game in a compatible environment (e.g., Command Prompt on Windows).
+
+4. **Timer Not Working Correctly**:
+    - The timer relies on `std::chrono` and accurate system clock functionality. If the timer seems to be inconsistent, check your system clock settings.
+
+5. **Hangman Drawing Not Appearing**:
+    - Ensure your console window is large enough to display the hangman drawing. Adjust the window size if needed.
+
+## Folder Structure
+
+The game expects the following folder structure:
+
+```
+/hangman
+│
+├── /x64         # Compiled binary files
+│   └── hangman.exe
+│
+├── /data          # Game data files
+│   └── categories.txt    # Words, hints, and difficulty levels
+│   └── ranking.txt       # Player rankings and scores
+│
+├── /src           # Source code
+│   └── hangman.cpp
+│
+└── README.md      # Game documentation
+```
+
+- Ensure that `categories.txt` (containing words, hints, and difficulty levels) and `ranking.txt` (for storing player scores) are in the `data` folder for the game to function properly.
+
+## Compilation
+
+To compile the game, use a C++ compiler such as `g++`. The following command will compile the game on any system with GCC installed:
+
+```bash
+g++ -o hangman hangman.cpp
+```
+
+After compiling, you can run the game using:
+
+```bash
+./hangman
+```
+
+## Additional Notes
+
+- **Compatibility**: 
+    - This game is designed for **Windows** using the Windows API for console color management and screen handling. It may not work properly on non-Windows platforms unless the API calls are adjusted for other operating systems.
+  
+- **System Requirements**: 
+    - The game uses `std::chrono
+
+` for time management, so make sure your system clock is correctly set to ensure proper functionality of the timer.
+  
+- **File Paths**: 
+    - Ensure the `ranking.txt` file is in the same directory as the executable for the ranking system to function correctly.
+
+## Enjoy playing the game!
 1. **Ranking System Not Saving**:
     - Ensure that the game has write permissions to the folder where it is saving `ranking.txt`.
     - Verify that the file is not open in another program while the game is running.
